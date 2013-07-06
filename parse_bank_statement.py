@@ -1,16 +1,19 @@
 import argparse
 from subprocess import Popen, PIPE
 import os
+import re
+import csv
 
 class Parser:
     def __init__(self, filename, extension):
         if not os.path.isfile(filename):
             raise Exception("%s must be a pdf file" % filename)
 
-        self.f = open(filename + extension, "wb")
+        self._f = open(filename + extension, "wb")
+        self.writer = csv.writer(self._f)
         
     def close(self):
-        self.f.close()
+        self._f.close()
 
 class DefaultParser(Parser):
     """Dummy parser which is active at the beginning until something else becomes active"""
@@ -31,7 +34,15 @@ class DepositParser(Parser):
         return line.startswith("DEPOSITS & OTHER CREDITS")
 
     def parse_line(self, line):
-        pass
+        if re.match("^(\d\d/\d\d\ )", line):
+            columns = line.split(" ")
+            columns = [column.strip() for column in columns if column.strip()]
+            if len(columns) >= 3:
+                columns = [columns[0], " ".join(columns[1:-1]), columns[-1]]
+            else:
+                raise Exception("Weird number of columns: %s" % line)
+
+            self.writer.writerow(columns)
 
 class CheckParser(Parser):
     def __init__(self, filename):
@@ -41,7 +52,15 @@ class CheckParser(Parser):
         return line.startswith("CHECKS PAID")
 
     def parse_line(self, line):
-        pass
+        if re.match("^\d\d\d\d\d\d\ ", line):
+            columns = line.split(" ")
+            columns = [column.strip() for column in columns if column.strip()]
+            if len(columns) == 0:
+                raise Exception("Weird number of columns: %s" % line)
+            if len(columns) % 3 == 0:
+                for i in xrange(len(columns) / 3):
+                    self.writer.writerow(columns[i*3:(i+1)*3])
+        
 
 class WithdrawalParser(Parser):
     def __init__(self, filename):
@@ -51,7 +70,15 @@ class WithdrawalParser(Parser):
         return line.startswith("WITHDRAWALS & OTHER DEBITS")
 
     def parse_line(self, line):
-        pass
+        if re.match("^(\d\d/\d\d\ )", line):
+            columns = line.split(" ")
+            columns = [column.strip() for column in columns if column.strip()]
+            if len(columns) >= 3:
+                columns = [columns[0], " ".join(columns[1:-1]), columns[-1]]
+            else:
+                raise Exception("Weird number of columns: %s" % line)
+            self.writer.writerow(columns)
+            
 
 class BalanceParser(Parser):
     def __init__(self, filename):
@@ -61,6 +88,7 @@ class BalanceParser(Parser):
         return line.startswith("BALANCE SUMMARY")
 
     def parse_line(self, line):
+        # this exists to prevent DepositParser or WithdrawalParser from using this information wrongly
         pass
 
 class Pdf2Csv:
@@ -83,7 +111,8 @@ class Pdf2Csv:
     def pdf_to_csv(self):
         output = Popen(["pdftotext", "-layout", self.filename, "-"], stdout=PIPE).communicate()[0]
 
-        for line in output:
+        for line in output.split("\n"):
+            line = line.strip()
             for parser in self.parsers:
                 if parser.is_header(line):
                     self.state = parser
