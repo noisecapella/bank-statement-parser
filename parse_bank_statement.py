@@ -3,6 +3,28 @@ from subprocess import Popen, PIPE
 import os
 import re
 import csv
+import dateutil.parser
+import datetime
+
+
+def reparse_date(date_string, year):
+    """date_string was originally year-less, so make it explicit"""
+    d = datetime.datetime.strptime(date_string, "%m/%d")
+
+    if not year:
+        raise Exception("Year not specified")
+    elif isinstance(year, tuple):
+        # each statement only covers one month
+        if d.month == 12:
+            d = datetime.datetime(year[0], d.month, d.day)
+        elif d.month == 1:
+            d = datetime.datetime(year[1], d.month, d.day)
+        else:
+            raise Exception("Month not December or January and year is a range")
+    else:
+        d = datetime.datetime(year, d.month, d.day)
+
+    return d.strftime("%m/%d/%Y")
 
 class Parser:
     def __init__(self, filename, extension):
@@ -23,7 +45,7 @@ class DefaultParser(Parser):
     def is_header(self, line):
         return False
 
-    def parse_line(self, line):
+    def parse_line(self, line, state):
         pass
 
 class DepositParser(Parser):
@@ -33,12 +55,13 @@ class DepositParser(Parser):
     def is_header(self, line):
         return line.startswith("DEPOSITS & OTHER CREDITS")
 
-    def parse_line(self, line):
+    def parse_line(self, line, state):
         if re.match("^(\d\d/\d\d\ )", line):
             columns = line.split(" ")
             columns = [column.strip() for column in columns if column.strip()]
             if len(columns) >= 3:
                 columns = [columns[0], " ".join(columns[1:-1]), columns[-1]]
+                columns[0] = reparse_date(columns[0], state.year)
             else:
                 raise Exception("Weird number of columns: %s" % line)
 
@@ -51,7 +74,7 @@ class CheckParser(Parser):
     def is_header(self, line):
         return line.startswith("CHECKS PAID")
 
-    def parse_line(self, line):
+    def parse_line(self, line, state):
         if re.match("^\d\d\d\d\d\d\ ", line):
             columns = line.split(" ")
             columns = [column.strip() for column in columns if column.strip()]
@@ -69,17 +92,40 @@ class WithdrawalParser(Parser):
     def is_header(self, line):
         return line.startswith("WITHDRAWALS & OTHER DEBITS")
 
-    def parse_line(self, line):
+    def parse_line(self, line, state):
         if re.match("^(\d\d/\d\d\ )", line):
             columns = line.split(" ")
             columns = [column.strip() for column in columns if column.strip()]
             if len(columns) >= 3:
                 columns = [columns[0], " ".join(columns[1:-1]), columns[-1]]
+                columns[0] = reparse_date(columns[0], state.year)
+                    
             else:
                 raise Exception("Weird number of columns: %s" % line)
             self.writer.writerow(columns)
-            
 
+class DateParser(Parser):
+    def __init__(self, filename):
+        Parser.__init__(self, filename, ".date.csv")
+
+    def is_header(self, line):
+        return line.strip().startswith("Statement Date ")
+
+    def parse_line(self, line, state):
+        if " Through " in line:
+            s1, s2 = line.split(" Through ")
+            d1 = dateutil.parser.parse(s1.strip())
+            year_string = re.search("\d\d\d\d", s2).group(0)
+            index = s2.index(year_string)
+            if index < 0:
+                raise Exception("Index less than 0")
+            d2 = dateutil.parser.parse(s2[:index + len(year_string)])
+
+            if d1.year != d2.year:
+                state.year = (d1.year, d2.year)
+            else:
+                state.year = d1.year
+        
 class BalanceParser(Parser):
     def __init__(self, filename):
         Parser.__init__(self, filename, ".balance.csv")
@@ -87,9 +133,14 @@ class BalanceParser(Parser):
     def is_header(self, line):
         return line.startswith("BALANCE SUMMARY")
 
-    def parse_line(self, line):
+    def parse_line(self, line, state):
         # this exists to prevent DepositParser or WithdrawalParser from using this information wrongly
         pass
+
+class State:
+    """Holds information to pass between parsers"""
+    def __init__(self):
+        self.year = None
 
 class Pdf2Csv:
     
@@ -100,11 +151,13 @@ class Pdf2Csv:
                         BalanceParser(filename),
                         CheckParser(filename),
                         WithdrawalParser(filename),
-                        DepositParser(filename)]
+                        DepositParser(filename),
+                        DateParser(filename)]
         self.filename = filename
 
 
-        self.state = self.parsers[0]
+        self.current_parser = self.parsers[0]
+        self.state = State()
 
         
 
@@ -115,10 +168,10 @@ class Pdf2Csv:
             line = line.strip()
             for parser in self.parsers:
                 if parser.is_header(line):
-                    self.state = parser
+                    self.current_parser = parser
                     break
             else:
-                self.state.parse_line(line)
+                self.current_parser.parse_line(line, self.state)
 
     def close(self):
         for parser in self.parsers:
