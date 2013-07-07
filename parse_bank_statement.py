@@ -61,7 +61,10 @@ class DepositParser(Parser):
             columns = [column.strip() for column in columns if column.strip()]
             if len(columns) >= 3:
                 columns = [columns[0], " ".join(columns[1:-1]), columns[-1]]
+                # add year to date
                 columns[0] = reparse_date(columns[0], state.year)
+                # remove thousands comma
+                columns[-1] = columns[-1].replace(",", "")
             else:
                 raise Exception("Weird number of columns: %s" % line)
 
@@ -98,7 +101,10 @@ class WithdrawalParser(Parser):
             columns = [column.strip() for column in columns if column.strip()]
             if len(columns) >= 3:
                 columns = [columns[0], " ".join(columns[1:-1]), columns[-1]]
+                # add year to date
                 columns[0] = reparse_date(columns[0], state.year)
+                # remove thousands comma
+                columns[-1] = columns[-1].replace(",", "")
                     
             else:
                 raise Exception("Weird number of columns: %s" % line)
