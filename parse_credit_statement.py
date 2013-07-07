@@ -17,7 +17,11 @@ class DateParser(Parser):
         if line.strip().startswith(to_match):
             date_string = line.strip()[len(to_match):].strip()
             date = dateutil.parser.parse(date_string)
-            state.year = date.year
+
+            if date.month == 1:
+                state.year = (date.year - 1, date.year)
+            else:
+                state.year = date.year
         return False
 
     def parse_line(self, line, state):
@@ -28,7 +32,7 @@ class TransactionParser(Parser):
         Parser.__init__(self, filename, ".transaction.csv")
 
     def is_header(self, line, state):
-        return line.startswith("TRANSACTIONS ")
+        return line.startswith("TRANSACTIONS")
 
     def parse_line(self, line, state):
         if re.match("^[A-Z0-9]{17}", line):
@@ -38,7 +42,7 @@ class TransactionParser(Parser):
             date_string = reparse_date(date_string, state.year)
             description = " ".join(columns[3:-1])
             price = columns[-1]
-            price = price.strip()
+            price = price.strip().replace(",", "")
             if price.endswith("-"):
                 withdrawal = price[:-1]
                 deposit = ""
@@ -46,6 +50,7 @@ class TransactionParser(Parser):
                 deposit = price
                 withdrawal = ""
             self.writer.writerow([date_string, description, deposit, withdrawal])
+
 
 def main():
     parser = argparse.ArgumentParser()
